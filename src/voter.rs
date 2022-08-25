@@ -230,8 +230,8 @@ impl<E: Environment> Round<E> {
         // if I'm the proposer
         if self.round_state.is_proposer() {
             // broadcast proposal
-            if let Some(vv) = self.round_state.global.lock().valid_value.clone() {
-                //
+            let valid_value = self.round_state.global.lock().valid_value.clone();
+            if let Some(vv) = valid_value {
                 let valid_round = self.round_state.global.lock().valid_round;
                 let proposal = Message::Proposal(Proposal {
                     target_hash: vv,
@@ -241,18 +241,17 @@ impl<E: Environment> Round<E> {
                 });
                 self.outgoing.send(proposal).await;
             } else {
+                let finalized_hash = self
+                    .round_state
+                    .global
+                    .lock()
+                    .decision
+                    .get(&height)
+                    .unwrap()
+                    .clone();
                 let (target_height, target_hash) = self
                     .env
-                    .propose(
-                        round,
-                        self.round_state
-                            .global
-                            .lock()
-                            .decision
-                            .get(&height)
-                            .unwrap()
-                            .clone(),
-                    )
+                    .propose(round, finalized_hash)
                     .await
                     .unwrap()
                     .unwrap();
