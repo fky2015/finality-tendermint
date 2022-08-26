@@ -23,13 +23,13 @@ impl DummyChain {
         inner.insert(
             GENESIS_HASH,
             BlockRecord {
-                number: 1,
+                number: 0,
                 parent: NULL_HASH,
             },
         );
         DummyChain {
             inner,
-            finalized: (1, GENESIS_HASH),
+            finalized: (0, GENESIS_HASH),
         }
     }
 

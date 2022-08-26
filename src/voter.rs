@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures::{Future, FutureExt, SinkExt, StreamExt};
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
-use tracing::info;
+use tracing::{info, trace};
 
 use crate::{
     environment::{Environment, RoundData, VoterData},
@@ -159,10 +159,10 @@ impl<E: Environment> Voter<E> {
             let round = self.global.lock().round;
             info!("Voting round {}", round);
 
-            let mut voting_round = Round::new(self.env.clone(), round, self.global.clone());
+            let voting_round = Round::new(self.env.clone(), round, self.global.clone());
 
             let round_state = voting_round.round_state.clone();
-            let mut incoming = async move {
+            let incoming = async move {
                 let mut incoming = round_state.lock().incoming.take().unwrap();
                 while let Some(Ok(signed_msg)) = incoming.next().await {
                     round_state.lock().process_incoming(signed_msg);
@@ -244,10 +244,12 @@ impl<E: Environment> Round<E> {
         let round = global.lock().round;
         // if I'm the proposer
         let is_proposer = self.round_state.lock().is_proposer();
+        info!("Round {}: proposer {}", round, is_proposer);
         if is_proposer {
             // broadcast proposal
             let valid_value = global.lock().valid_value.clone();
             if let Some(vv) = valid_value {
+                info!("valid_value: {:?}", vv);
                 let valid_round = global.lock().valid_round;
                 let proposal = Message::Proposal(Proposal {
                     target_hash: vv,
@@ -255,9 +257,18 @@ impl<E: Environment> Round<E> {
                     valid_round,
                     round,
                 });
+                info!("Proposing {:?}", proposal);
                 self.outgoing.send(proposal).await;
             } else {
-                let finalized_hash = global.lock().decision.get(&height).unwrap().clone();
+                info!("No valid value");
+                let decision = global.lock().decision.clone();
+                info!("decision: {:?}, height: {:?}", decision, height);
+
+                let finalized_hash = decision.get(&height).unwrap().clone();
+                info!("testtest");
+
+                // let finalized_hash = global.lock().decision.get(&height).unwrap().clone();
+                info!("current_target {:?}", finalized_hash);
                 let (target_height, target_hash) = self
                     .env
                     .propose(round, finalized_hash)
@@ -292,23 +303,21 @@ impl<E: Environment> Round<E> {
         });
 
         info!("Waiting for proposal");
-        if let Ok(proposal) = fu.await {
+        let provote = if let Ok(proposal) = fu.await {
             info!("Got proposal {:?}", proposal);
             if let Some(vr) = proposal.valid_round {
                 if vr < round && global.lock().get_round(vr).is_some() {
-                    let provote = Message::Prevote(Prevote {
+                    Message::Prevote(Prevote {
                         target_hash: Some(proposal.target_hash.clone()),
                         target_height: proposal.target_height,
                         round: proposal.round,
-                    });
-                    self.outgoing.send(provote).await;
+                    })
                 } else {
-                    let provote = Message::Prevote(Prevote {
+                    Message::Prevote(Prevote {
                         target_hash: None,
                         target_height: proposal.target_height,
                         round: proposal.round,
-                    });
-                    self.outgoing.send(provote).await;
+                    })
                 }
                 // need find prevotes for vr
             } else {
@@ -320,19 +329,17 @@ impl<E: Environment> Round<E> {
                 let proposal_target_hash = proposal.target_hash.clone();
 
                 if locked_round == None || locked_value == Some(proposal_target_hash.clone()) {
-                    let provote = Message::Prevote(Prevote {
+                    Message::Prevote(Prevote {
                         target_hash: Some(proposal_target_hash),
                         target_height: proposal.target_height,
                         round: proposal.round,
-                    });
-                    self.outgoing.send(provote).await;
+                    })
                 } else {
-                    let provote = Message::Prevote(Prevote {
+                    Message::Prevote(Prevote {
                         target_hash: None,
                         target_height: proposal.target_height,
                         round: proposal.round,
-                    });
-                    self.outgoing.send(provote).await;
+                    })
                 }
             }
         } else {
@@ -340,51 +347,53 @@ impl<E: Environment> Round<E> {
             // broadcast nil
             let target_height = global.lock().height;
             let round = global.lock().round;
-            let provote = Message::Prevote(Prevote {
+            Message::Prevote(Prevote {
                 target_hash: None,
                 target_height,
                 round,
-            });
-            self.outgoing.send(provote).await;
-        }
+            })
+        };
+
+        info!("Sending provote {:?}", provote);
+        self.outgoing.send(provote).await;
 
         global.lock().current_state = CurrentState::Prevote;
 
         let timeout = tokio::time::sleep(Duration::from_secs(1));
         tokio::pin!(timeout);
-        // TODO: fu.await
         let fu = futures::future::poll_fn(|cx| {
-            // WARN: dead lock
-            if &self.round_state.lock().prevotes.len() >= &global.lock().voters.threshold() {
-                Poll::Ready(Ok(self.round_state.lock().prevotes.clone()))
+            let provotes = self.round_state.lock().prevotes.clone();
+            let threshold = global.lock().voters.threshold();
+            if provotes.len() >= threshold {
+                Poll::Ready(Ok(provotes))
             } else {
-                match timeout.poll_unpin(cx) {
-                    Poll::Ready(_) => Poll::Ready(Err(())),
-                    Poll::Pending => Poll::Pending,
-                }
+                timeout.poll_unpin(cx).map(|_| Err(()))
             }
         });
 
-        if let Ok(prevotes) = fu.await {
+        let precommit = if let Ok(prevotes) = fu.await {
+            info!("Got prevotes {:?}", prevotes);
             global.lock().locked_value = None;
-            global.lock().locked_round = Some(global.lock().round);
+            let locked_round = global.lock().round;
+            global.lock().locked_round = Some(locked_round);
 
             let prevote = self.valid_prevotes(prevotes);
 
-            let precommit = Message::Precommit(Precommit {
+            Message::Precommit(Precommit {
                 target_hash: prevote.target_hash,
                 target_height: prevote.target_height,
                 round,
-            });
-            self.outgoing.send(precommit).await;
+            })
         } else {
-            let precommit = Message::Precommit(Precommit {
+            Message::Precommit(Precommit {
                 target_hash: None,
                 target_height: height,
                 round,
-            });
-            self.outgoing.send(precommit).await;
-        }
+            })
+        };
+
+        info!("Sending precommit {:?}", precommit);
+        self.outgoing.send(precommit).await;
         // 37: if stepp = prevote then
         // 38: lockedV aluep ← v
         // 39: lockedRoundp ← roundp
@@ -398,19 +407,21 @@ impl<E: Environment> Round<E> {
             if &self.round_state.lock().precommits.len() >= &global.lock().voters.threshold() {
                 Poll::Ready(Ok(self.round_state.lock().precommits.clone()))
             } else {
-                match timeout.poll_unpin(cx) {
-                    Poll::Ready(_) => Poll::Ready(Err(())),
-                    Poll::Pending => Poll::Pending,
-                }
+                timeout.poll_unpin(cx).map(|_| Err(()))
             }
         });
 
         if let Ok(commits) = fu.await {
+            info!("Got precommits {:?}", commits);
             let commit = self.valid_precommits(commits.clone());
 
             if let Some(hash) = commit.target_hash {
-                global.lock().decision.insert(height, hash.clone());
-                global.lock().height = global.lock().height + num::one();
+                global
+                    .lock()
+                    .decision
+                    .insert(commit.target_height, hash.clone());
+                let new_height = global.lock().height + num::one();
+                global.lock().height = new_height;
                 global.lock().locked_value = None;
                 global.lock().locked_round = None;
                 global.lock().valid_value = None;
@@ -421,12 +432,12 @@ impl<E: Environment> Round<E> {
                     target_hash: hash,
                     target_number: commit.target_height,
                 };
+                info!("Finalize commit {:?}", f_commit);
                 Ok(f_commit)
             } else {
                 Err(self.round_state.lock().prevotes.clone())
             }
         } else {
-            // TODO: Return round message log
             Err(self.round_state.lock().prevotes.clone())
         }
     }
@@ -538,7 +549,8 @@ impl<E: Environment> RoundState<E> {
 #[cfg(test)]
 mod test {
     use futures::{executor::LocalPool, task::SpawnExt, StreamExt};
-    use tracing::info;
+    use parking_lot::deadlock;
+    use tracing::{error, info};
 
     use crate::testing::GENESIS_HASH;
     use std::sync::Arc;
@@ -547,14 +559,41 @@ mod test {
 
     use super::*;
 
+    // #[cfg(deadlock_detection)]
+    async fn deadlock_detection() {
+        loop {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            let deadlocks = deadlock::check_deadlock();
+            if deadlocks.is_empty() {
+                trace!("No deadlocks detected");
+                continue;
+            }
+
+            error!("{} deadlocks detected", deadlocks.len());
+            for (i, threads) in deadlocks.iter().enumerate() {
+                error!("Deadlock #{}", i);
+                for t in threads {
+                    error!("Thread Id {:#?}", t.thread_id());
+                    error!("{:#?}", t.backtrace());
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn basic_test() {
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .finish();
+        // let subscriber = tracing_subscriber::fmt()
+        //     .with_max_level(tracing::Level::TRACE)
+        //     .finish();
+        //
+        // tracing::subscriber::set_global_default(subscriber)
+        //     .map_err(|_err| eprintln!("Unable to set global default subscriber"));
 
-        tracing::subscriber::set_global_default(subscriber)
-            .map_err(|_err| eprintln!("Unable to set global default subscriber"));
+        #[cfg(feature = "deadlock_detection")]
+        {
+            info!("deadlock_detection is enabled");
+            tokio::spawn(deadlock_detection());
+        }
 
         info!("Starting test");
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -594,7 +633,7 @@ mod test {
         finalized
             .take_while(|&(_, n)| {
                 log::info!("n: {}", n);
-                futures::future::ready(n < 6)
+                futures::future::ready(n < 5)
             })
             .for_each(|v| {
                 log::info!("v: {:?}", v);

@@ -49,14 +49,6 @@ impl DummyEnvironment {
         self.listeners.lock().push(tx);
         rx
     }
-
-    pub async fn run(&self) {
-        Delay::new(Duration::from_millis(1000)).await;
-        tracing::trace!("hello");
-        Delay::new(Duration::from_millis(1000)).await;
-        tracing::trace!("world");
-        Delay::new(Duration::from_millis(1000)).await;
-    }
 }
 
 impl Environment for DummyEnvironment {
@@ -92,7 +84,9 @@ impl Environment for DummyEnvironment {
         >,
     >;
 
-    fn init_voter(&self) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut, Self::Number, Self::Hash> {
+    fn init_voter(
+        &self,
+    ) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut, Self::Number, Self::Hash> {
         let globals = self.network.make_global_comms(self.local_id);
         VoterData {
             finalized_target: (0, GENESIS_HASH),

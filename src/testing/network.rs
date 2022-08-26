@@ -3,12 +3,13 @@ use crate::{
     Error,
 };
 
+use tokio::sync::Notify;
 use tracing::instrument;
 
 use super::*;
 use core::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 use futures::{
     channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -131,16 +132,20 @@ pub(crate) fn make_network() -> (Network, NetworkRouting) {
 
     let rounds = Arc::new(Mutex::new(HashMap::new()));
     let global = Arc::new(Mutex::new(GlobalMessageNetwork::new(rule.clone())));
+
+    let notify = Arc::new(Mutex::new(None));
     (
         Network {
             rounds: rounds.clone(),
             global: global.clone(),
             rule: rule.clone(),
+            notify: notify.clone(),
         },
         NetworkRouting {
             rounds,
             global,
             rule,
+            notify,
         },
     )
 }
@@ -247,6 +252,7 @@ pub struct NetworkRouting {
     global: Arc<Mutex<GlobalMessageNetwork>>,
     /// Routing rule.
     pub(crate) rule: Arc<Mutex<RoutingRule>>,
+    notify: Arc<Mutex<Option<Waker>>>,
 }
 
 impl NetworkRouting {
@@ -261,7 +267,9 @@ impl NetworkRouting {
 impl Future for NetworkRouting {
     type Output = ();
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.notify.lock().insert(cx.waker().clone());
+
         tracing::trace!("NetworkRouting::poll start.");
         let mut rounds = self.rounds.lock();
         // Retain all round that not finished
@@ -289,8 +297,6 @@ impl Future for NetworkRouting {
 
         tracing::trace!("NetworkRouting::poll end.");
 
-        // WARN: Not elegant
-        cx.waker().wake_by_ref();
         // Nerver stop.
         Poll::Pending
     }
@@ -302,6 +308,7 @@ pub struct Network {
     rounds: Arc<Mutex<HashMap<u64, RoundNetwork>>>,
     global: Arc<Mutex<GlobalMessageNetwork>>,
     pub(crate) rule: Arc<Mutex<RoutingRule>>,
+    notify: Arc<Mutex<Option<Waker>>>,
 }
 
 impl Network {
@@ -339,6 +346,13 @@ impl Network {
         }
 
         tracing::trace!("make_round_comms end");
+
+        // Notify the network routing task.
+        self.notify
+            .as_ref()
+            .lock()
+            .as_ref()
+            .map(|waker| waker.wake_by_ref());
 
         round_comm
     }
