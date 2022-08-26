@@ -3,6 +3,8 @@ use crate::{
     Error,
 };
 
+use tracing::instrument;
+
 use super::*;
 use core::{
     pin::Pin,
@@ -10,7 +12,7 @@ use core::{
 };
 use futures::{
     channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
-    Future, Sink, Stream, SinkExt, StreamExt,
+    Future, Sink, SinkExt, Stream, StreamExt,
 };
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
@@ -61,7 +63,7 @@ impl<M: Clone + std::fmt::Debug> BroadcastNetwork<M> {
         impl Stream<Item = Result<M, Error>>,
         impl Sink<N, Error = Error>,
     ) {
-        log::trace!("BroadcastNetwork::add_node");
+        tracing::trace!("BroadcastNetwork::add_node");
         // Channel from Network to the new node.
         let (tx, rx) = mpsc::unbounded();
         let messages_out = self
@@ -75,10 +77,10 @@ impl<M: Clone + std::fmt::Debug> BroadcastNetwork<M> {
         // 	let _ = tx.unbounded_send(prior_message);
         // }
 
-        // log::trace!("add_node: tx.isclosed? {}", tx.is_closed());
+        // tracing::trace!("add_node: tx.isclosed? {}", tx.is_closed());
         self.senders.push((id, tx));
 
-        log::trace!("BroadcastNetwork::add_node end.");
+        tracing::trace!("BroadcastNetwork::add_node end.");
         (rx.map(Ok), messages_out)
     }
 
@@ -96,14 +98,14 @@ impl<M: Clone + std::fmt::Debug> BroadcastNetwork<M> {
                         hook(&msg);
                     }
 
-                    log::trace!("    msg {:?}", msg);
+                    tracing::trace!("    msg {:?}", msg);
                     // Broadcast to all peers including itself.
                     for (to, sender) in &self.senders {
                         if self.rule.lock().valid_route(from, to) {
                             let _res = sender.unbounded_send(msg.clone());
                         }
-                        // log::trace!("route: tx.isclosed? {}", sender.is_closed());
-                        // log::trace!("res: {:?}", res);
+                        // tracing::trace!("route: tx.isclosed? {}", sender.is_closed());
+                        // tracing::trace!("res: {:?}", res);
                     }
                 }
                 Poll::Pending => return Poll::Pending,
@@ -260,14 +262,14 @@ impl Future for NetworkRouting {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        log::trace!("NetworkRouting::poll start.");
+        tracing::trace!("NetworkRouting::poll start.");
         let mut rounds = self.rounds.lock();
         // Retain all round that not finished
         rounds.retain(|view, round_network| {
-            log::trace!("  view: {view} poll");
+            tracing::trace!("  view: {view} poll");
             let ret = match round_network.route(cx) {
                 Poll::Ready(()) => {
-                    log::trace!(
+                    tracing::trace!(
                         "    view: {view}, round_network.route: finished with history: {}",
                         round_network.history.len()
                     );
@@ -277,7 +279,7 @@ impl Future for NetworkRouting {
                 Poll::Pending => true,
             };
 
-            log::trace!("  view: {view} poll end");
+            tracing::trace!("  view: {view} poll end");
 
             ret
         });
@@ -285,8 +287,10 @@ impl Future for NetworkRouting {
         let mut global = self.global.lock();
         let _ = global.route(cx);
 
-        log::trace!("NetworkRouting::poll end.");
+        tracing::trace!("NetworkRouting::poll end.");
 
+        // WARN: Not elegant
+        cx.waker().wake_by_ref();
         // Nerver stop.
         Poll::Pending
     }
@@ -302,6 +306,7 @@ pub struct Network {
 
 impl Network {
     /// Initialize a round network.
+    #[instrument(level = "trace", skip(self))]
     pub fn make_round_comms(
         &self,
         view_number: u64,
@@ -310,7 +315,7 @@ impl Network {
         impl Stream<Item = Result<SignedMessage<BlockNumber, Hash, Signature, Id>, Error>>,
         impl Sink<Message<BlockNumber, Hash>, Error = Error>,
     ) {
-        log::trace!(
+        tracing::trace!(
             "make_round_comms, view_number: {}, node_id: {}",
             view_number,
             node_id
@@ -326,14 +331,14 @@ impl Network {
             });
 
         for (key, value) in rounds.iter() {
-            log::trace!(
+            tracing::trace!(
                 "  round_comms: {}, senders.len:{:?}",
                 key,
                 value.senders.len()
             );
         }
 
-        log::trace!("make_round_comms end");
+        tracing::trace!("make_round_comms end");
 
         round_comm
     }
@@ -346,7 +351,7 @@ impl Network {
         impl Stream<Item = Result<GlobalMessageIn<Hash, BlockNumber, Signature, Id>, Error>>,
         impl Sink<GlobalMessageOut<Hash, BlockNumber, Signature, Id>, Error = Error>,
     ) {
-        log::trace!("make_global_comms");
+        tracing::trace!("make_global_comms");
         let mut global = self.global.lock();
         let f: fn(GlobalMessageOut<_, _, _, _>) -> GlobalMessageIn<_, _, _, _> = |msg| match msg {
             GlobalMessageOut::Commit(view, commit) => {

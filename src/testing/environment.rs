@@ -52,9 +52,9 @@ impl DummyEnvironment {
 
     pub async fn run(&self) {
         Delay::new(Duration::from_millis(1000)).await;
-        log::trace!("hello");
+        tracing::trace!("hello");
         Delay::new(Duration::from_millis(1000)).await;
-        log::trace!("world");
+        tracing::trace!("world");
         Delay::new(Duration::from_millis(1000)).await;
     }
 }
@@ -92,9 +92,10 @@ impl Environment for DummyEnvironment {
         >,
     >;
 
-    fn init_voter(&self) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut> {
+    fn init_voter(&self) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut, Self::Number, Self::Hash> {
         let globals = self.network.make_global_comms(self.local_id);
         VoterData {
+            finalized_target: (0, GENESIS_HASH),
             voters: self.voters.lock().clone(),
             global_in: Box::new(globals.0),
             global_out: Box::pin(globals.1),
@@ -103,13 +104,11 @@ impl Environment for DummyEnvironment {
     }
 
     fn init_round(&self, round: u64) -> RoundData<Self::Id, Self::In, Self::Out> {
-        log::trace!("{:?} round_data view: {}", self.local_id, round);
-        const GOSSIP_DURATION: Duration = Duration::from_millis(500);
+        tracing::trace!("{:?} round_data view: {}", self.local_id, round);
 
         let (incomming, outgoing) = self.network.make_round_comms(round, self.local_id);
         RoundData {
             local_id: self.local_id,
-            // prevote_timer: Box::new(Delay::new(GOSSIP_DURATION).map(Ok)),
             incoming: Box::new(incomming),
             outgoing: Box::pin(outgoing),
         }
@@ -122,7 +121,7 @@ impl Environment for DummyEnvironment {
         number: Self::Number,
         _f_commit: FinalizedCommit<Self::Number, Self::Hash, Self::Signature, Self::Id>,
     ) -> Result<(), Self::Error> {
-        log::trace!("{:?} finalize_block", self.local_id);
+        tracing::trace!("{:?} finalize_block", self.local_id);
         self.chain.lock().finalize_block(hash);
         self.listeners
             .lock()

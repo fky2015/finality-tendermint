@@ -51,7 +51,7 @@ pub trait Environment {
         > + Unpin;
 
     /// Get Voter data.
-    fn init_voter(&self) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut>;
+    fn init_voter(&self) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut, Self::Number, Self::Hash>;
 
     /// Get round data.
     fn init_round(&self, view: u64) -> RoundData<Self::Id, Self::In, Self::Out>;
@@ -80,12 +80,13 @@ pub trait Environment {
 }
 
 /// Data necessary to create a voter.
-pub struct VoterData<Id: Ord, GlobalIn, GlobalOut> {
+pub struct VoterData<Id: Ord, GlobalIn, GlobalOut, N, D> {
     /// Local voter id.
     pub local_id: Id,
     pub global_in: GlobalIn,
     pub global_out: GlobalOut,
     pub voters: VoterSet<Id>,
+    pub finalized_target: (N, D),
 }
 
 /// Data necessary to participate in a round.

@@ -12,6 +12,8 @@ log = { version = "0.4", optional = true }
 num = { package = "num-traits", version = "0.2", default-features = false }
 parking_lot = { version = "0.12", optional = true }
 tokio = { version = "1.20.1", features = ["full"]}
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [features]
 default = ["std"]

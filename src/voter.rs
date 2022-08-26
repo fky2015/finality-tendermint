@@ -2,9 +2,10 @@ use core::{num::NonZeroUsize, task::Poll, time::Duration};
 
 use std::sync::Arc;
 
-use futures::{FutureExt, SinkExt, StreamExt};
+use futures::{Future, FutureExt, SinkExt, StreamExt};
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
+use tracing::info;
 
 use crate::{
     environment::{Environment, RoundData, VoterData},
@@ -137,12 +138,14 @@ pub struct Voter<E: Environment> {
 impl<E: Environment> Voter<E> {
     fn new(env: Arc<E>) -> Self {
         let VoterData {
+            finalized_target,
             global_in,
             global_out,
             local_id,
             voters,
         } = env.init_voter();
         let global = Arc::new(Mutex::new(GlobalState::new(local_id, voters)));
+        global.lock().set_finalized_target(finalized_target);
         Voter {
             env,
             global_in,
@@ -154,29 +157,39 @@ impl<E: Environment> Voter<E> {
     async fn start(&mut self) {
         loop {
             let round = self.global.lock().round;
+            info!("Voting round {}", round);
 
             let mut voting_round = Round::new(self.env.clone(), round, self.global.clone());
 
-            match voting_round.run().await {
-                Ok(f_commit) => {
-                    // Send commit to global_out;
-                    self.env.finalize_block(
-                        round,
-                        f_commit.target_hash.clone(),
-                        f_commit.target_number.clone(),
-                        f_commit,
-                    );
+            let round_state = voting_round.round_state.clone();
+            let mut incoming = async move {
+                let mut incoming = round_state.lock().incoming.take().unwrap();
+                while let Some(Ok(signed_msg)) = incoming.next().await {
+                    round_state.lock().process_incoming(signed_msg);
                 }
-                Err(provotes) => {
-                    // save round data to global state.
-                    self.global.lock().append_round(round, provotes)
-                }
+            };
+
+            tokio::select! {
+                _ = incoming => {},
+                res = voting_round.run() => {
+                    match res {
+                        Ok(f_commit) => {
+                            // Send commit to global_out;
+                            self.env.finalize_block(
+                                round,
+                                f_commit.target_hash.clone(),
+                                f_commit.target_number.clone(),
+                                f_commit,
+                            );
+                        }
+                        Err(provotes) => {
+                            // save round data to global state.
+                            self.global.lock().append_round(round, provotes)
+                        }
+                    }
+                },
             }
         }
-
-        // inited client
-
-        // if I'm the proposer
     }
 }
 
@@ -184,7 +197,7 @@ pub struct Round<E: Environment> {
     local_id: E::Id,
     env: Arc<E>,
     outgoing: E::Out,
-    round_state: RoundState<E>,
+    round_state: Arc<Mutex<RoundState<E>>>,
 }
 
 impl<E: Environment> Round<E> {
@@ -196,7 +209,7 @@ impl<E: Environment> Round<E> {
             ..
         } = env.init_round(round);
         let proposer = global.lock().voters.get_proposer(round);
-        let round_state = RoundState::new(incoming, proposer, global);
+        let round_state = Arc::new(Mutex::new(RoundState::new(incoming, proposer, global)));
         Round {
             env,
             outgoing,
@@ -225,14 +238,17 @@ impl<E: Environment> Round<E> {
         FinalizedCommit<E::Number, E::Hash, E::Signature, E::Id>,
         Vec<Prevote<E::Number, E::Hash>>,
     > {
-        let height = self.round_state.global.lock().height;
-        let round = self.round_state.global.lock().round;
+        let global = self.round_state.lock().global.clone();
+
+        let height = global.lock().height;
+        let round = global.lock().round;
         // if I'm the proposer
-        if self.round_state.is_proposer() {
+        let is_proposer = self.round_state.lock().is_proposer();
+        if is_proposer {
             // broadcast proposal
-            let valid_value = self.round_state.global.lock().valid_value.clone();
+            let valid_value = global.lock().valid_value.clone();
             if let Some(vv) = valid_value {
-                let valid_round = self.round_state.global.lock().valid_round;
+                let valid_round = global.lock().valid_round;
                 let proposal = Message::Proposal(Proposal {
                     target_hash: vv,
                     target_height: height + num::one(),
@@ -241,14 +257,7 @@ impl<E: Environment> Round<E> {
                 });
                 self.outgoing.send(proposal).await;
             } else {
-                let finalized_hash = self
-                    .round_state
-                    .global
-                    .lock()
-                    .decision
-                    .get(&height)
-                    .unwrap()
-                    .clone();
+                let finalized_hash = global.lock().decision.get(&height).unwrap().clone();
                 let (target_height, target_hash) = self
                     .env
                     .propose(round, finalized_hash)
@@ -264,27 +273,29 @@ impl<E: Environment> Round<E> {
                         valid_round: None,
                         round,
                     });
+
+                    info!("Proposing {:?}", proposal);
+
                     self.outgoing.send(proposal).await;
                 };
             }
         }
 
-        let timeout = tokio::time::sleep(Duration::from_secs(1));
+        let timeout = tokio::time::sleep(Duration::from_millis(1000));
         tokio::pin!(timeout);
         let fu = futures::future::poll_fn(|cx| {
-            if let Some(proposal) = &self.round_state.proposal {
-                Poll::Ready(Ok(proposal))
+            if let Some(proposal) = &self.round_state.lock().proposal {
+                Poll::Ready(Ok(proposal.clone()))
             } else {
-                match timeout.poll_unpin(cx) {
-                    Poll::Ready(_) => Poll::Ready(Err(())),
-                    Poll::Pending => Poll::Pending,
-                }
+                timeout.poll_unpin(cx).map(|_| Err(()))
             }
         });
 
+        info!("Waiting for proposal");
         if let Ok(proposal) = fu.await {
+            info!("Got proposal {:?}", proposal);
             if let Some(vr) = proposal.valid_round {
-                if vr < round && self.round_state.global.lock().get_round(vr).is_some() {
+                if vr < round && global.lock().get_round(vr).is_some() {
                     let provote = Message::Prevote(Prevote {
                         target_hash: Some(proposal.target_hash.clone()),
                         target_height: proposal.target_height,
@@ -303,8 +314,8 @@ impl<E: Environment> Round<E> {
             } else {
                 // no need
                 // valid(v) ∧ (lockedRoundp = −1 ∨ lockedV aluep = v)
-                let locked_round = self.round_state.global.lock().locked_round;
-                let locked_value = self.round_state.global.lock().locked_value.clone();
+                let locked_round = global.lock().locked_round;
+                let locked_value = global.lock().locked_value.clone();
 
                 let proposal_target_hash = proposal.target_hash.clone();
 
@@ -325,9 +336,10 @@ impl<E: Environment> Round<E> {
                 }
             }
         } else {
+            info!("No proposal");
             // broadcast nil
-            let target_height = self.round_state.global.lock().height;
-            let round = self.round_state.global.lock().round;
+            let target_height = global.lock().height;
+            let round = global.lock().round;
             let provote = Message::Prevote(Prevote {
                 target_hash: None,
                 target_height,
@@ -336,16 +348,15 @@ impl<E: Environment> Round<E> {
             self.outgoing.send(provote).await;
         }
 
-        self.round_state.global.lock().current_state = CurrentState::Prevote;
+        global.lock().current_state = CurrentState::Prevote;
 
         let timeout = tokio::time::sleep(Duration::from_secs(1));
         tokio::pin!(timeout);
         // TODO: fu.await
         let fu = futures::future::poll_fn(|cx| {
-            if &self.round_state.prevotes.len()
-                >= &self.round_state.global.lock().voters.threshold()
-            {
-                Poll::Ready(Ok(self.round_state.prevotes.clone()))
+            // WARN: dead lock
+            if &self.round_state.lock().prevotes.len() >= &global.lock().voters.threshold() {
+                Poll::Ready(Ok(self.round_state.lock().prevotes.clone()))
             } else {
                 match timeout.poll_unpin(cx) {
                     Poll::Ready(_) => Poll::Ready(Err(())),
@@ -355,9 +366,8 @@ impl<E: Environment> Round<E> {
         });
 
         if let Ok(prevotes) = fu.await {
-            self.round_state.global.lock().locked_value = None;
-            self.round_state.global.lock().locked_round =
-                Some(self.round_state.global.lock().round);
+            global.lock().locked_value = None;
+            global.lock().locked_round = Some(global.lock().round);
 
             let prevote = self.valid_prevotes(prevotes);
 
@@ -385,10 +395,8 @@ impl<E: Environment> Round<E> {
         let timeout = tokio::time::sleep(Duration::from_secs(1));
         tokio::pin!(timeout);
         let fu = futures::future::poll_fn(|cx| {
-            if &self.round_state.precommits.len()
-                >= &self.round_state.global.lock().voters.threshold()
-            {
-                Poll::Ready(Ok(self.round_state.precommits.clone()))
+            if &self.round_state.lock().precommits.len() >= &global.lock().voters.threshold() {
+                Poll::Ready(Ok(self.round_state.lock().precommits.clone()))
             } else {
                 match timeout.poll_unpin(cx) {
                     Poll::Ready(_) => Poll::Ready(Err(())),
@@ -401,17 +409,12 @@ impl<E: Environment> Round<E> {
             let commit = self.valid_precommits(commits.clone());
 
             if let Some(hash) = commit.target_hash {
-                self.round_state
-                    .global
-                    .lock()
-                    .decision
-                    .insert(height, hash.clone());
-                self.round_state.global.lock().height =
-                    self.round_state.global.lock().height + num::one();
-                self.round_state.global.lock().locked_value = None;
-                self.round_state.global.lock().locked_round = None;
-                self.round_state.global.lock().valid_value = None;
-                self.round_state.global.lock().valid_round = None;
+                global.lock().decision.insert(height, hash.clone());
+                global.lock().height = global.lock().height + num::one();
+                global.lock().locked_value = None;
+                global.lock().locked_round = None;
+                global.lock().valid_value = None;
+                global.lock().valid_round = None;
 
                 let f_commit = FinalizedCommit {
                     commits,
@@ -420,11 +423,11 @@ impl<E: Environment> Round<E> {
                 };
                 Ok(f_commit)
             } else {
-                Err(self.round_state.prevotes.clone())
+                Err(self.round_state.lock().prevotes.clone())
             }
         } else {
             // TODO: Return round message log
-            Err(self.round_state.prevotes.clone())
+            Err(self.round_state.lock().prevotes.clone())
         }
     }
 }
@@ -470,6 +473,11 @@ impl<E: Environment> GlobalState<E> {
             .cloned()
             .filter(|v| v.len() > self.voters.threshold())
     }
+
+    pub fn set_finalized_target(&mut self, target: (E::Number, E::Hash)) {
+        self.decision.insert(target.0, target.1);
+        self.height = target.0;
+    }
 }
 
 pub struct RoundState<E: Environment> {
@@ -478,13 +486,13 @@ pub struct RoundState<E: Environment> {
     proposal: Option<Proposal<E::Number, E::Hash>>,
     prevotes: Vec<Prevote<E::Number, E::Hash>>,
     precommits: Vec<SignedCommit<E::Number, E::Hash, E::Signature, E::Id>>,
-    incoming: E::In,
+    incoming: Option<E::In>,
 }
 
 impl<E: Environment> RoundState<E> {
     fn new(incoming: E::In, proposer: E::Id, global: Arc<Mutex<GlobalState<E>>>) -> Self {
         RoundState {
-            incoming,
+            incoming: Some(incoming),
             proposal: None,
             prevotes: Vec::new(),
             precommits: Vec::new(),
@@ -497,25 +505,31 @@ impl<E: Environment> RoundState<E> {
         self.proposer == self.global.lock().local_id
     }
 
-    async fn process_incoming(&mut self) {
-        while let Some(Ok(signed_msg)) = self.incoming.next().await {
-            let SignedMessage { id, msg, signature } = signed_msg;
-            match msg {
-                Message::Proposal(proposal) => {
-                    if self.proposer == id {
-                        self.proposal = Some(proposal);
-                    }
+    fn process_incoming(
+        &mut self,
+        signed_msg: SignedMessage<
+            <E as Environment>::Number,
+            <E as Environment>::Hash,
+            <E as Environment>::Signature,
+            <E as Environment>::Id,
+        >,
+    ) {
+        let SignedMessage { id, msg, signature } = signed_msg;
+        match msg {
+            Message::Proposal(proposal) => {
+                if self.proposer == id {
+                    self.proposal = Some(proposal);
                 }
-                Message::Prevote(prevote) => {
-                    self.prevotes.push(prevote);
-                }
-                Message::Precommit(precommit) => {
-                    self.precommits.push(SignedCommit {
-                        commit: precommit,
-                        signature,
-                        id,
-                    });
-                }
+            }
+            Message::Prevote(prevote) => {
+                self.prevotes.push(prevote);
+            }
+            Message::Precommit(precommit) => {
+                self.precommits.push(SignedCommit {
+                    commit: precommit,
+                    signature,
+                    id,
+                });
             }
         }
     }
@@ -524,6 +538,7 @@ impl<E: Environment> RoundState<E> {
 #[cfg(test)]
 mod test {
     use futures::{executor::LocalPool, task::SpawnExt, StreamExt};
+    use tracing::info;
 
     use crate::testing::GENESIS_HASH;
     use std::sync::Arc;
@@ -532,9 +547,19 @@ mod test {
 
     use super::*;
 
-    #[test]
-    fn basic_test() {
-        // simple_logger::init_with_level(log::Level::Trace).unwrap();
+    #[tokio::test]
+    async fn basic_test() {
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber)
+            .map_err(|_err| eprintln!("Unable to set global default subscriber"));
+
+        info!("Starting test");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        info!("Starting test");
+
         let local_id = 5;
         let voter_set = Arc::new(Mutex::new(VoterSet::new(vec![5]).unwrap()));
 
@@ -554,32 +579,27 @@ mod test {
             chain.last_finalized()
         });
 
-        // let mut voter = Voter::new(env.clone(), voter_set, global_comms, 1, last_finalized);
         let mut voter = Voter::new(env.clone());
+
+        tokio::spawn(routing_network);
+
+        tokio::spawn(async move {
+            voter.start().await;
+        });
 
         // run voter in background. scheduling it to shut down at the end.
         let finalized = env.finalized_stream();
 
-        let mut pool = LocalPool::new();
-        // futures::executor::block_on(testa(voter));
-        pool.spawner()
-            .spawn(async move {
-                voter.start().await;
-            })
-            .unwrap();
-        pool.spawner().spawn(routing_network).unwrap();
-
         // wait for the best block to finalized.
-        pool.run_until(
-            finalized
-                .take_while(|&(_, n)| {
-                    log::info!("n: {}", n);
-                    futures::future::ready(n < 6)
-                })
-                .for_each(|v| {
-                    log::info!("v: {:?}", v);
-                    futures::future::ready(())
-                }),
-        )
+        finalized
+            .take_while(|&(_, n)| {
+                log::info!("n: {}", n);
+                futures::future::ready(n < 6)
+            })
+            .for_each(|v| {
+                log::info!("v: {:?}", v);
+                futures::future::ready(())
+            })
+            .await
     }
 }
