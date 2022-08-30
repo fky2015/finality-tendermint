@@ -31,3 +31,6 @@ std = [
 test-helpers = ["fuzz-helpers", "std", "deadlock_detection"]
 deadlock_detection = []
 fuzz-helpers = []
+
+[profile.test]
+panic = "abort"

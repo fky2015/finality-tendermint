@@ -1,4 +1,5 @@
 use futures::{Future, Sink, Stream};
+use tracing::Value;
 
 use crate::{
     messages::{FinalizedCommit, GlobalMessageIn, GlobalMessageOut, Message, SignedMessage},
@@ -14,7 +15,7 @@ pub trait Environment {
     /// [`Self::round_commit_timer`].
     type Timer: Future<Output = Result<(), Self::Error>> + Unpin;
     /// The associated Id for the Environment.
-    type Id: Clone + Eq + std::hash::Hash + Ord + std::fmt::Debug;
+    type Id: Clone + Eq + std::hash::Hash + Ord + std::fmt::Debug + Value;
     /// The associated Signature type for the Environment.
     type Signature: Eq + Clone + core::fmt::Debug;
     /// Associated future type for the environment used when asynchronously computing the
