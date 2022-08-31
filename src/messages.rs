@@ -1,3 +1,8 @@
+#[cfg(feature = "derive-codec")]
+use parity_scale_codec::{Decode, Encode};
+#[cfg(feature = "derive-codec")]
+use scale_info::TypeInfo;
+
 /// A preprepare message for a block in PBFT.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "derive-codec", derive(Encode, Decode, TypeInfo))]

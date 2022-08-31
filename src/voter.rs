@@ -572,6 +572,7 @@ impl<E: Environment> RoundState<E> {
 #[cfg(test)]
 mod test {
     use futures::{executor::LocalPool, task::SpawnExt, StreamExt};
+    #[cfg(feature = "deadlock_detection")]
     use parking_lot::deadlock;
     use tracing::{error, info};
 
@@ -582,7 +583,7 @@ mod test {
 
     use super::*;
 
-    // #[cfg(deadlock_detection)]
+    #[cfg(deadlock_detection)]
     async fn deadlock_detection() {
         loop {
             tokio::time::sleep(Duration::from_secs(10)).await;
@@ -603,20 +604,28 @@ mod test {
         }
     }
 
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    fn init() {
+        INIT.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .finish();
+
+            tracing::subscriber::set_global_default(subscriber)
+                .map_err(|_err| eprintln!("Unable to set global default subscriber"));
+
+            #[cfg(feature = "deadlock_detection")]
+            {
+                info!("deadlock_detection is enabled");
+                tokio::spawn(deadlock_detection());
+            }
+        });
+    }
+
     #[tokio::test]
     async fn basic_test() {
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .finish();
-
-        tracing::subscriber::set_global_default(subscriber)
-            .map_err(|_err| eprintln!("Unable to set global default subscriber"));
-
-        #[cfg(feature = "deadlock_detection")]
-        {
-            info!("deadlock_detection is enabled");
-            tokio::spawn(deadlock_detection());
-        }
+        init();
 
         let local_id = 5;
         let voter_set = Arc::new(Mutex::new(VoterSet::new(vec![5]).unwrap()));
@@ -663,21 +672,8 @@ mod test {
 
     #[tokio::test]
     async fn consensus_test() {
-        // TODO: tracing log contain node id.
+        init();
         let voters_num = 4;
-
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .finish();
-
-        tracing::subscriber::set_global_default(subscriber)
-            .map_err(|_err| eprintln!("Unable to set global default subscriber"));
-
-        #[cfg(feature = "deadlock_detection")]
-        {
-            info!("deadlock_detection is enabled");
-            tokio::spawn(deadlock_detection());
-        }
 
         let voter_set = Arc::new(Mutex::new(
             VoterSet::new((0..voters_num).into_iter().collect()).unwrap(),
@@ -734,6 +730,7 @@ mod test {
 
     #[tokio::test]
     async fn consensus_with_failed_node() {
+        init();
         let voters_num = 4;
         let online_voters_num = 3;
 
@@ -742,19 +739,6 @@ mod test {
             default_panic(info);
             std::process::exit(1);
         }));
-
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .finish();
-
-        tracing::subscriber::set_global_default(subscriber)
-            .map_err(|_err| eprintln!("Unable to set global default subscriber"));
-
-        #[cfg(feature = "deadlock_detection")]
-        {
-            info!("deadlock_detection is enabled");
-            tokio::spawn(deadlock_detection());
-        }
 
         let voter_set = Arc::new(Mutex::new(
             VoterSet::new((0..voters_num).into_iter().collect()).unwrap(),
