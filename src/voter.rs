@@ -19,7 +19,8 @@ use crate::{
     VoterSet,
 };
 
-enum CurrentState {
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub enum CurrentState {
     Proposal,
     Prevote,
     Precommit,
@@ -28,6 +29,39 @@ enum CurrentState {
 impl CurrentState {
     pub fn new() -> Self {
         CurrentState::Proposal
+    }
+}
+
+pub mod report {
+    use std::collections::{HashMap, HashSet};
+
+    use super::CurrentState;
+
+    /// Trait for querying the state of the voter. Used by `Voter` to return a queryable object
+    /// without exposing too many data types.
+    pub trait VoterStateT<Hash, Id: Eq + std::hash::Hash> {
+        /// Returns a plain data type, `report::VoterState`, describing the current state
+        /// of the voter relevant to the voting process.
+        fn get(&self) -> VoterState<Hash, Id>;
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct ViewState<Hash, Id: Eq + std::hash::Hash> {
+        pub state: CurrentState,
+        pub total_voters: usize,
+        pub threshold: usize,
+        pub proposal_hash: Option<Hash>,
+        /// The identities of nodes that have cast prepare so far.
+        pub prevote_ids: HashSet<Id>,
+        pub precommit_ids: HashSet<Id>,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct VoterState<Hash, Id: Eq + std::hash::Hash> {
+        /// Voting rounds running in the background.
+        pub background_views: HashMap<u64, ViewState<Hash, Id>>,
+        /// The current best voting view.
+        pub best_view: (u64, ViewState<Hash, Id>),
     }
 }
 
