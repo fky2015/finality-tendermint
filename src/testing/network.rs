@@ -332,7 +332,7 @@ impl Network {
             .entry(view_number)
             .or_insert_with(|| RoundNetwork::new(self.rule.clone()))
             .add_node(node_id, move |msg| SignedMessage {
-                msg,
+                message,
                 signature: node_id,
                 id: node_id,
             });

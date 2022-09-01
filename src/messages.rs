@@ -31,7 +31,9 @@ pub struct Precommit<N, D> {
     pub target_hash: Option<D>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(any(feature = "std", test), derive(Debug))]
+#[cfg_attr(feature = "derive-codec", derive(Encode, Decode, TypeInfo))]
 pub enum Message<N, H> {
     Proposal(Proposal<N, H>),
     Prevote(Prevote<N, H>),
@@ -39,11 +41,13 @@ pub enum Message<N, H> {
 }
 
 /// Signed Messages
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(any(feature = "std", test), derive(Debug))]
+#[cfg_attr(feature = "derive-codec", derive(Encode, Decode, TypeInfo))]
 pub struct SignedMessage<N, H, Sig, Id> {
     pub id: Id,
     pub signature: Sig,
-    pub msg: Message<N, H>,
+    pub message: Message<N, H>,
 }
 
 /// A signed commit message.
@@ -60,7 +64,9 @@ pub struct SignedCommit<N, D, S, Id> {
 }
 
 /// Signed Messages
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(any(feature = "std", test), derive(Debug))]
+#[cfg_attr(feature = "derive-codec", derive(Encode, Decode, TypeInfo))]
 pub struct FinalizedCommit<N, D, Sig, Id> {
     /// The target block's hash.
     pub target_hash: D,

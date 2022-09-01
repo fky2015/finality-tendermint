@@ -11,7 +11,8 @@ futures-timer = { version = "3.0", optional = true }
 log = { version = "0.4", optional = true }
 num = { package = "num-traits", version = "0.2", default-features = false }
 parking_lot = { version = "0.12", optional = true }
-tokio = { version = "1.20.1", features = ["full"]}
+# tokio = { version = "1.20.1", features = ["full"]}
+tokio = { version = "1.20.1" , features = ["time", "macros"]}
 tracing = "0.1"
 tracing-subscriber = "0.3"
 parity-scale-codec = { version = "3", default-features = false, optional = true, features = [
@@ -20,6 +21,9 @@ parity-scale-codec = { version = "3", default-features = false, optional = true,
 scale-info = { version = "2", default-features = false, optional = true, features = [
     "derive",
 ] }
+
+[dev-dependencies]
+tokio = { version = "1.20.1" , features = ["full"]}
 
 [features]
 default = ["std"]

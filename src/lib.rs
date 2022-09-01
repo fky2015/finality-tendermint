@@ -1,5 +1,7 @@
-#![warn(missing_docs)]
+// #![warn(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
+
+use core::num::NonZeroUsize;
 
 #[cfg(not(feature = "std"))]
 #[macro_use]
@@ -43,6 +45,8 @@ pub trait BlockNumberOps:
 {
 }
 
+use crate::std::{collections::BTreeMap, vec::Vec};
+
 impl BlockNumberOps for u64 {}
 
 /// Error for Tendermint
@@ -63,16 +67,113 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 #[cfg(feature = "std")]
-mod messages;
+pub mod messages;
 
 #[cfg(feature = "std")]
-mod environment;
+pub mod environment;
 
 #[cfg(feature = "std")]
-mod voter;
+pub mod voter;
 
 // #[cfg(feature = "std")]
 // mod rpc;
 
 #[cfg(all(test, feature = "std"))]
-mod testing;
+pub(crate) mod testing;
+
+/// A set of nodes valid to vote.
+#[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(any(feature = "std", test), derive(Debug))]
+pub struct VoterSet<Id: Eq + Ord> {
+    /// Voter's Id, with the same order as the vector in genesis block (or the following).
+    voters: Vec<Id>,
+    /// The required threshold number for supermajority.
+    /// Normally, it's > 2/3.
+    threshold: usize,
+}
+
+impl<Id: Eq + Ord + Clone> VoterSet<Id> {
+    pub fn new(voters: Vec<Id>) -> Option<Self> {
+        if voters.is_empty() {
+            None
+        } else {
+            let len = voters.len() - (voters.len() - 1) / 3;
+            Some(Self {
+                voters,
+                threshold: len,
+            })
+        }
+    }
+
+    pub fn add(&mut self, id: Id) {
+        self.voters.push(id);
+    }
+
+    pub fn remove(&mut self, id: &Id) {
+        self.voters.retain(|x| x != id);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.voters.is_empty()
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.voters.len() >= self.threshold
+    }
+
+    pub fn is_member(&self, id: &Id) -> bool {
+        self.voters.contains(id)
+    }
+
+    pub fn threshold(&self) -> usize {
+        self.threshold
+    }
+
+    /// Get the size of the set.
+    pub fn len(&self) -> NonZeroUsize {
+        unsafe {
+            // SAFETY: By VoterSet::new()
+            NonZeroUsize::new_unchecked(self.voters.len())
+        }
+    }
+
+    /// Get the nth voter in the set, if any.
+    ///
+    /// Returns `None` if `n >= len`.
+    pub fn nth(&self, n: usize) -> Option<&Id> {
+        self.voters.get(n)
+    }
+
+    /// Get a ref to voters.
+    pub fn voters(&self) -> &[Id] {
+        &self.voters
+    }
+
+    /// Get leader Id.
+    pub fn get_proposer(&self, round: u64) -> Id {
+        self.voters
+            .get(round as usize % self.voters.len())
+            .cloned()
+            .unwrap()
+    }
+
+    /// Whether the set contains a voter with the given ID.
+    pub fn contains(&self, id: &Id) -> bool {
+        self.voters.contains(id)
+    }
+
+    /// Get an iterator over the voters in the set, as given by
+    /// the associated total order.
+    pub fn iter(&self) -> impl Iterator<Item = &Id> {
+        self.voters.iter()
+    }
+
+    /// Get the voter info for the voter with the given ID, if any.
+    pub fn get(&self, id: &Id) -> Option<&Id> {
+        if let Some(pos) = self.voters.iter().position(|i| id == i) {
+            self.voters.get(pos)
+        } else {
+            None
+        }
+    }
+}

@@ -3,8 +3,7 @@ use tracing::Value;
 
 use crate::{
     messages::{FinalizedCommit, GlobalMessageIn, GlobalMessageOut, Message, SignedMessage},
-    voter::VoterSet,
-    BlockNumberOps, Error,
+    BlockNumberOps, Error, VoterSet,
 };
 
 /// Necessary environment for a voter.
@@ -52,7 +51,9 @@ pub trait Environment {
         > + Unpin;
 
     /// Get Voter data.
-    fn init_voter(&self) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut, Self::Number, Self::Hash>;
+    fn init_voter(
+        &self,
+    ) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut, Self::Number, Self::Hash>;
 
     /// Get round data.
     fn init_round(&self, view: u64) -> RoundData<Self::Id, Self::In, Self::Out>;
