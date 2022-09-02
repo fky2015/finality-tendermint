@@ -81,6 +81,34 @@ pub mod voter;
 #[cfg(all(test, feature = "std"))]
 pub(crate) mod testing;
 
+pub mod round {
+    #[cfg(feature = "derive-codec")]
+    use parity_scale_codec::{Decode, Encode};
+    #[cfg(feature = "derive-codec")]
+    use scale_info::TypeInfo;
+
+    /// State of the round.
+    #[derive(PartialEq, Clone)]
+    #[cfg_attr(any(feature = "std", test), derive(Debug))]
+    #[cfg_attr(feature = "derive-codec", derive(Encode, Decode, scale_info::TypeInfo))]
+    pub struct State<H, N> {
+        /// The finalized block.
+        pub finalized: Option<(H, N)>,
+        /// Whether the view is completable.
+        pub completable: bool,
+    }
+
+    impl<H: Clone, N: Clone> State<N, H> {
+        /// Genesis state.
+        pub fn genesis(genesis: (N, H)) -> Self {
+            State {
+                finalized: Some(genesis.clone()),
+                completable: true,
+            }
+        }
+    }
+}
+
 /// A set of nodes valid to vote.
 #[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(any(feature = "std", test), derive(Debug))]
