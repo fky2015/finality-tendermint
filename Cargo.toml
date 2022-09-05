@@ -13,8 +13,7 @@ num = { package = "num-traits", version = "0.2", default-features = false }
 parking_lot = { version = "0.12", optional = true }
 # tokio = { version = "1.20.1", features = ["full"]}
 tokio = { version = "1.20.1" , features = ["time", "macros"]}
-tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing = {version = "0.1", default-features = false } 
 parity-scale-codec = { version = "3", default-features = false, optional = true, features = [
     "derive",
 ] }
@@ -24,17 +23,20 @@ scale-info = { version = "2", default-features = false, optional = true, feature
 
 [dev-dependencies]
 tokio = { version = "1.20.1" , features = ["full"]}
+tracing-subscriber = "0.3"
+tracing = {version = "0.1"} 
 
 [features]
 default = ["std"]
 std = [
-    # "parity-scale-codec/std",
+    "parity-scale-codec/std",
     "num/std",
     "parking_lot",
     "log",
     "futures-timer",
     "futures/executor",
-    # "scale-info/std",
+    "tracing/std",
+    "scale-info/std",
 ]
 
 derive-codec = ["parity-scale-codec", "scale-info"]

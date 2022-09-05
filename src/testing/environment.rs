@@ -11,8 +11,7 @@ use std::sync::Arc;
 use crate::environment::{Environment, RoundData, VoterData};
 use crate::messages::{FinalizedCommit, GlobalMessageIn, GlobalMessageOut, Message, SignedMessage};
 use crate::testing::network::VoterState;
-use crate::voter::VoterSet;
-use crate::Error;
+use crate::{Error, VoterSet};
 
 /// A implementation of `Environment`.
 use super::{chain::DummyChain, network::Network, *};

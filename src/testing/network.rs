@@ -331,7 +331,7 @@ impl Network {
         let round_comm = rounds
             .entry(view_number)
             .or_insert_with(|| RoundNetwork::new(self.rule.clone()))
-            .add_node(node_id, move |msg| SignedMessage {
+            .add_node(node_id, move |message| SignedMessage {
                 message,
                 signature: node_id,
                 id: node_id,

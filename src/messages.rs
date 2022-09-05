@@ -3,6 +3,9 @@ use parity_scale_codec::{Decode, Encode};
 #[cfg(feature = "derive-codec")]
 use scale_info::TypeInfo;
 
+#[cfg(not(feature="std"))]
+use crate::std::vec::Vec;
+
 /// A preprepare message for a block in PBFT.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "derive-codec", derive(Encode, Decode, TypeInfo))]
@@ -200,6 +203,7 @@ impl<H, N> Default for CommitValidationResult<H, N> {
 }
 
 /// Communication between nodes that is not round-localized.
+#[cfg(feature = "std")]
 #[cfg_attr(any(test, feature = "test-helpers"), derive(Clone))]
 #[derive(Debug)]
 pub enum GlobalMessageIn<D, N, S, Id> {
@@ -216,6 +220,7 @@ pub enum GlobalMessageIn<D, N, S, Id> {
     Empty,
 }
 
+#[cfg(feature = "std")]
 impl<D, N, S, Id> PartialEq for GlobalMessageIn<D, N, S, Id> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -225,9 +230,11 @@ impl<D, N, S, Id> PartialEq for GlobalMessageIn<D, N, S, Id> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<D, N, S, Id> Unpin for GlobalMessageIn<D, N, S, Id> {}
 
 /// Communication between nodes that is not round-localized.
+#[cfg(feature = "std")]
 #[cfg_attr(any(test, feature = "test-helpers"), derive(Clone))]
 #[derive(Debug)]
 pub enum GlobalMessageOut<D, N, S, Id> {
@@ -245,6 +252,7 @@ pub enum GlobalMessageOut<D, N, S, Id> {
 /// Callback used to pass information about the outcome of importing a given
 /// message (e.g. vote, commit, catch up). Useful to propagate data to the
 /// network after making sure the import is successful.
+#[cfg(feature = "std")]
 pub enum Callback<O> {
     /// Default value.
     Blank,
@@ -252,6 +260,7 @@ pub enum Callback<O> {
     Work(Box<dyn FnMut(O) + Send>),
 }
 
+#[cfg(feature = "std")]
 impl<O> std::fmt::Debug for Callback<O> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -261,6 +270,7 @@ impl<O> std::fmt::Debug for Callback<O> {
     }
 }
 
+#[cfg(feature = "std")]
 #[cfg(any(test, feature = "test-helpers"))]
 impl<O> Clone for Callback<O> {
     fn clone(&self) -> Self {
@@ -268,6 +278,7 @@ impl<O> Clone for Callback<O> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<O> Callback<O> {
     /// Do the work associated with the callback, if any.
     pub fn run(&mut self, o: O) {
@@ -279,6 +290,7 @@ impl<O> Callback<O> {
 }
 
 /// The outcome of processing a commit.
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitProcessingOutcome {
     /// It was beneficial to process this commit.
@@ -287,6 +299,7 @@ pub enum CommitProcessingOutcome {
     Bad(BadCommit),
 }
 
+#[cfg(feature = "std")]
 #[cfg(any(test, feature = "test-helpers"))]
 impl CommitProcessingOutcome {
     /// Returns a `Good` instance of commit processing outcome's opaque type. Useful for testing.
@@ -301,9 +314,11 @@ impl CommitProcessingOutcome {
 }
 
 /// The result of processing for a good commit.
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoodCommit {}
 
+#[cfg(feature = "std")]
 impl GoodCommit {
     pub(crate) fn new() -> Self {
         GoodCommit {}
@@ -318,6 +333,7 @@ pub struct BadCommit {
     num_invalid_voters: usize,
 }
 
+#[cfg(feature = "std")]
 impl BadCommit {
     /// Get the number of precommits
     pub fn num_commits(&self) -> usize {
@@ -335,6 +351,7 @@ impl BadCommit {
     }
 }
 
+#[cfg(feature = "std")]
 impl<H, N> From<CommitValidationResult<H, N>> for BadCommit {
     fn from(r: CommitValidationResult<H, N>) -> Self {
         BadCommit {

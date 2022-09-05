@@ -66,7 +66,7 @@ impl std::fmt::Display for Error {
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
-#[cfg(feature = "std")]
+// #[cfg(feature = "std")]
 pub mod messages;
 
 #[cfg(feature = "std")]
@@ -81,7 +81,7 @@ pub mod voter;
 #[cfg(all(test, feature = "std"))]
 pub(crate) mod testing;
 
-pub mod round {
+pub mod persistent {
     #[cfg(feature = "derive-codec")]
     use parity_scale_codec::{Decode, Encode};
     #[cfg(feature = "derive-codec")]
