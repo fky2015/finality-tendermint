@@ -3,7 +3,7 @@ use parity_scale_codec::{Decode, Encode};
 #[cfg(feature = "derive-codec")]
 use scale_info::TypeInfo;
 
-#[cfg(not(feature="std"))]
+#[cfg(not(feature = "std"))]
 use crate::std::vec::Vec;
 
 /// A preprepare message for a block in PBFT.
@@ -43,6 +43,24 @@ pub enum Message<N, H> {
     Precommit(Precommit<N, H>),
 }
 
+impl<N: Clone, H: Clone> Message<N, H> {
+    pub fn round(&self) -> u64 {
+        match self {
+            Message::Proposal(p) => p.round,
+            Message::Prevote(p) => p.round,
+            Message::Precommit(p) => p.round,
+        }
+    }
+
+    pub fn target(&self) -> (Option<H>, N) {
+        match self {
+            Message::Proposal(p) => (Some(p.target_hash.clone()), p.target_height.clone()),
+            Message::Prevote(p) => (p.target_hash.clone(), p.target_height.clone()),
+            Message::Precommit(p) => (p.target_hash.clone(), p.target_height.clone()),
+        }
+    }
+}
+
 /// Signed Messages
 #[derive(Clone)]
 #[cfg_attr(any(feature = "std", test), derive(Debug))]
@@ -51,6 +69,16 @@ pub struct SignedMessage<N, H, Sig, Id> {
     pub id: Id,
     pub signature: Sig,
     pub message: Message<N, H>,
+}
+
+impl<N: Clone, H: Clone, Sig: Clone, Id: Clone> SignedMessage<N, H, Sig, Id> {
+    pub fn round(&self) -> u64 {
+        self.message.round()
+    }
+
+    pub fn target(&self) -> (Option<H>, N) {
+        self.message.target()
+    }
 }
 
 /// A signed commit message.
@@ -66,8 +94,18 @@ pub struct SignedCommit<N, D, S, Id> {
     pub id: Id,
 }
 
+impl<N, D, S, Id> From<SignedCommit<N, D, S, Id>> for SignedMessage<N, D, S, Id> {
+    fn from(commit: SignedCommit<N, D, S, Id>) -> Self {
+        SignedMessage {
+            id: commit.id,
+            signature: commit.signature,
+            message: Message::Precommit(commit.commit),
+        }
+    }
+}
+
 /// Signed Messages
-#[derive(Clone)]
+#[derive(PartialEq, Eq, Clone)]
 #[cfg_attr(any(feature = "std", test), derive(Debug))]
 #[cfg_attr(feature = "derive-codec", derive(Encode, Decode, TypeInfo))]
 pub struct FinalizedCommit<N, D, Sig, Id> {

@@ -19,6 +19,8 @@ use crate::{
     VoterSet,
 };
 
+use self::report::VoterStateT;
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum CurrentState {
     Proposal,
@@ -46,7 +48,7 @@ pub mod report {
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct ViewState<Hash, Id: Eq + std::hash::Hash> {
+    pub struct RoundState<Hash, Id: Eq + std::hash::Hash> {
         pub state: CurrentState,
         pub total_voters: usize,
         pub threshold: usize,
@@ -58,10 +60,10 @@ pub mod report {
 
     #[derive(Clone, Debug)]
     pub struct VoterState<Hash, Id: Eq + std::hash::Hash> {
-        /// Voting rounds running in the background.
-        pub background_views: HashMap<u64, ViewState<Hash, Id>>,
+        // Voting rounds running in the background.
+        // pub background_views: HashMap<u64, ViewState<Hash, Id>>,
         /// The current best voting view.
-        pub best_view: (u64, ViewState<Hash, Id>),
+        pub best_round: (u64, RoundState<Hash, Id>),
     }
 }
 
@@ -70,28 +72,30 @@ pub struct Voter<E: Environment> {
     global: Arc<Mutex<GlobalState<E>>>,
     global_in: E::GlobalIn,
     global_out: E::GlobalOut,
+    best: Arc<Mutex<InnerVoterState<E>>>,
 }
 
 impl<E: Environment> Voter<E> {
-    fn new(env: Arc<E>) -> Self {
-        let VoterData {
-            finalized_target,
-            global_in,
-            global_out,
-            local_id,
-            voters,
-        } = env.init_voter();
-        let global = Arc::new(Mutex::new(GlobalState::new(local_id, voters)));
+    pub fn new(
+        env: Arc<E>,
+        global_in: E::GlobalIn,
+        global_out: E::GlobalOut,
+        voters: VoterSet<E::Id>,
+        finalized_target: (E::Number, E::Hash),
+    ) -> Self {
+        let VoterData { local_id } = env.init_voter();
+        let global = Arc::new(Mutex::new(GlobalState::new(local_id.clone(), voters)));
         global.lock().set_finalized_target(finalized_target);
         Voter {
             env,
             global_in,
             global_out,
+            best: Arc::new(Mutex::new(InnerVoterState::new(local_id, global.clone()))),
             global,
         }
     }
 
-    async fn start(&mut self) {
+    pub async fn start(&mut self) {
         loop {
             let round = self.global.lock().round;
 
@@ -156,9 +160,9 @@ impl<E: Environment> Round<E> {
 
     fn valid_prevotes(
         &self,
-        prevotes: Vec<Prevote<E::Number, E::Hash>>,
+        prevotes: Vec<(Prevote<E::Number, E::Hash>, E::Id, E::Signature)>,
     ) -> Prevote<E::Number, E::Hash> {
-        prevotes.first().unwrap().clone()
+        prevotes.first().map(|(v, _, _)| v).unwrap().clone()
     }
 
     fn valid_precommits(
@@ -182,6 +186,7 @@ impl<E: Environment> Round<E> {
         let round = global.lock().round;
         // if I'm the proposer
         let is_proposer = self.round_state.lock().is_proposer();
+        #[cfg(test)]
         info!(
             id = self.local_id,
             "Round {}: proposer {}", round, is_proposer
@@ -190,6 +195,7 @@ impl<E: Environment> Round<E> {
             // broadcast proposal
             let valid_value = global.lock().valid_value.clone();
             if let Some(vv) = valid_value {
+                #[cfg(test)]
                 info!(id = self.local_id, "valid_value: {:?}", vv);
                 let valid_round = global.lock().valid_round;
                 let proposal = Message::Proposal(Proposal {
@@ -198,11 +204,14 @@ impl<E: Environment> Round<E> {
                     valid_round,
                     round,
                 });
+                #[cfg(test)]
                 info!(id = self.local_id, "Proposing {:?}", proposal);
                 self.outgoing.send(proposal).await;
             } else {
+                #[cfg(test)]
                 info!(id = self.local_id, "No valid value");
                 let decision = global.lock().decision.clone();
+                #[cfg(test)]
                 info!(
                     id = self.local_id,
                     "decision: {:?}, height: {:?}", decision, height
@@ -211,6 +220,7 @@ impl<E: Environment> Round<E> {
                 let finalized_hash = decision.get(&height).unwrap().clone();
 
                 // let finalized_hash = global.lock().decision.get(&height).unwrap().clone();
+                #[cfg(test)]
                 info!(id = self.local_id, "current_target {:?}", finalized_hash);
                 let (target_height, target_hash) = self
                     .env
@@ -230,6 +240,7 @@ impl<E: Environment> Round<E> {
                         round,
                     });
 
+                    #[cfg(test)]
                     info!(id = self.local_id, "Proposing {:?}", proposal);
 
                     self.outgoing.send(proposal).await;
@@ -250,8 +261,10 @@ impl<E: Environment> Round<E> {
             }
         });
 
+        #[cfg(test)]
         info!(id = self.local_id, "Waiting for proposal");
         let provote = if let Ok(proposal) = fu.await {
+            #[cfg(test)]
             info!(id = self.local_id, "Got proposal {:?}", proposal);
             if let Some(vr) = proposal.valid_round {
                 if vr < round && global.lock().get_round(vr).is_some() {
@@ -291,6 +304,7 @@ impl<E: Environment> Round<E> {
                 }
             }
         } else {
+            #[cfg(test)]
             info!(id = self.local_id, "No proposal");
             // broadcast nil
             let target_height = global.lock().height;
@@ -302,6 +316,7 @@ impl<E: Environment> Round<E> {
             })
         };
 
+        #[cfg(test)]
         info!(id = self.local_id, "Sending provote {:?}", provote);
         self.outgoing.send(provote).await;
 
@@ -322,6 +337,7 @@ impl<E: Environment> Round<E> {
         });
 
         let precommit = if let Ok(prevotes) = fu.await {
+            #[cfg(test)]
             info!(id = self.local_id, "Got prevotes {:?}", prevotes);
             global.lock().locked_value = None;
             let locked_round = global.lock().round;
@@ -342,6 +358,7 @@ impl<E: Environment> Round<E> {
             })
         };
 
+        #[cfg(test)]
         info!(id = self.local_id, "Sending precommit {:?}", precommit);
         self.outgoing.send(precommit).await;
         // 37: if stepp = prevote then
@@ -365,6 +382,7 @@ impl<E: Environment> Round<E> {
         });
 
         if let Ok(commits) = fu.await {
+            #[cfg(test)]
             info!(id = self.local_id, "Got precommits {:?}", commits);
             let commit = self.valid_precommits(commits.clone());
 
@@ -385,13 +403,26 @@ impl<E: Environment> Round<E> {
                     target_hash: hash,
                     target_number: commit.target_height,
                 };
+                #[cfg(test)]
                 info!(id = self.local_id, "Finalize commit {:?}", f_commit);
                 Ok(f_commit)
             } else {
-                Err(self.round_state.lock().prevotes.clone())
+                Err(self
+                    .round_state
+                    .lock()
+                    .prevotes
+                    .iter()
+                    .map(|(v, _, _)| v.clone())
+                    .collect())
             }
         } else {
-            Err(self.round_state.lock().prevotes.clone())
+            Err(self
+                .round_state
+                .lock()
+                .prevotes
+                .iter()
+                .map(|(v, _, _)| v.clone())
+                .collect())
         }
     }
 }
@@ -448,7 +479,7 @@ pub struct RoundState<E: Environment> {
     global: Arc<Mutex<GlobalState<E>>>,
     proposer: E::Id,
     proposal: Option<Proposal<E::Number, E::Hash>>,
-    prevotes: Vec<Prevote<E::Number, E::Hash>>,
+    prevotes: Vec<(Prevote<E::Number, E::Hash>, E::Id, E::Signature)>,
     precommits: Vec<SignedCommit<E::Number, E::Hash, E::Signature, E::Id>>,
     incoming: Option<E::In>,
     waker: Option<Waker>,
@@ -492,7 +523,7 @@ impl<E: Environment> RoundState<E> {
                 }
             }
             Message::Prevote(prevote) => {
-                self.prevotes.push(prevote);
+                self.prevotes.push((prevote, id, signature));
             }
             Message::Precommit(precommit) => {
                 self.precommits.push(SignedCommit {
@@ -506,12 +537,96 @@ impl<E: Environment> RoundState<E> {
     }
 }
 
+impl<'a, E> Voter<E>
+where
+    E: Environment + Sync + Send + 'a,
+{
+    /// Returns an object allowing to query the voter state.
+    pub fn voter_state(&self) -> Box<dyn VoterStateT<E::Hash, E::Id> + Send + Sync + 'a>
+    where
+        <E as Environment>::Signature: Send,
+        <E as Environment>::Id: std::hash::Hash + Send,
+        <E as Environment>::Timer: Send,
+        <E as Environment>::Out: Send,
+        <E as Environment>::In: Send,
+        <E as Environment>::Number: Send,
+        <E as Environment>::Hash: Send,
+    {
+        Box::new(SharedVoterState(self.best.clone()))
+    }
+}
+
+/// The inner state of a voter aggregating the currently running round state
+/// (i.e. best and background rounds). This state exists separately since it's
+/// useful to wrap in a `Arc<Mutex<_>>` for sharing.
+#[derive(Clone)]
+pub struct InnerVoterState<E>
+where
+    E: Environment,
+{
+    best: Arc<Mutex<RoundState<E>>>,
+}
+
+impl<E> InnerVoterState<E>
+where
+    E: Environment,
+{
+    /// Mock at start.
+    pub fn new(proposer: E::Id, global: Arc<Mutex<GlobalState<E>>>) -> Self {
+        InnerVoterState {
+            best: Arc::new(Mutex::new(RoundState {
+                waker: None,
+                incoming: None,
+                global,
+                proposal: None,
+                prevotes: Vec::new(),
+                precommits: Vec::new(),
+                proposer,
+            })),
+        }
+    }
+}
+
+struct SharedVoterState<E>(Arc<Mutex<InnerVoterState<E>>>)
+where
+    E: Environment;
+
+impl<E: Environment> VoterStateT<E::Hash, E::Id> for SharedVoterState<E> {
+    fn get(&self) -> report::VoterState<E::Hash, E::Id> {
+        let round = self.0.lock();
+        let round_state = round.best.lock();
+        let round = round_state.global.lock().round;
+        let current_state = round_state.global.lock().current_state.clone();
+        let voters = round_state.global.lock().voters.clone();
+        report::VoterState {
+            best_round: (
+                round,
+                report::RoundState {
+                    state: current_state,
+                    total_voters: voters.len().get(),
+                    threshold: voters.threshold,
+                    proposal_hash: round_state.proposal.as_ref().map(|p| p.target_hash.clone()),
+                    prevote_ids: round_state
+                        .prevotes
+                        .iter()
+                        .map(|(_, id, _)| id.clone())
+                        .collect(),
+                    precommit_ids: round_state
+                        .precommits
+                        .iter()
+                        .map(|SignedCommit { id, .. }| id.clone())
+                        .collect(),
+                },
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use futures::{executor::LocalPool, task::SpawnExt, StreamExt};
+    use futures::StreamExt;
     #[cfg(feature = "deadlock_detection")]
     use parking_lot::deadlock;
-    use tracing::{error, info};
 
     use crate::testing::GENESIS_HASH;
     use std::sync::Arc;
@@ -554,6 +669,7 @@ mod test {
 
             #[cfg(feature = "deadlock_detection")]
             {
+                #[cfg(test)]
                 info!("deadlock_detection is enabled");
                 tokio::spawn(deadlock_detection());
             }

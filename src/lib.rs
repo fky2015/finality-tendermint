@@ -45,9 +45,19 @@ pub trait BlockNumberOps:
 {
 }
 
-use crate::std::{collections::BTreeMap, vec::Vec};
+impl<T> BlockNumberOps for T
+where
+    T: std::fmt::Debug,
+    T: std::cmp::Ord,
+    T: std::ops::Add<Output = Self>,
+    T: std::ops::Sub<Output = Self>,
+    T: num::One,
+    T: num::Zero,
+    T: num::AsPrimitive<usize>,
+{
+}
 
-impl BlockNumberOps for u64 {}
+use crate::std::{collections::BTreeMap, vec::Vec};
 
 /// Error for Tendermint
 #[derive(Clone, PartialEq)]

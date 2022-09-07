@@ -14,7 +14,10 @@ pub trait Environment {
     /// [`Self::round_commit_timer`].
     type Timer: Future<Output = Result<(), Self::Error>> + Unpin;
     /// The associated Id for the Environment.
+    #[cfg(test)]
     type Id: Clone + Eq + std::hash::Hash + Ord + std::fmt::Debug + Value;
+    #[cfg(not(test))]
+    type Id: Clone + Eq + std::hash::Hash + Ord + std::fmt::Debug;
     /// The associated Signature type for the Environment.
     type Signature: Eq + Clone + core::fmt::Debug;
     /// Associated future type for the environment used when asynchronously computing the
@@ -53,7 +56,7 @@ pub trait Environment {
     /// Get Voter data.
     fn init_voter(
         &self,
-    ) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut, Self::Number, Self::Hash>;
+    ) -> VoterData<Self::Id>;
 
     /// Get round data.
     fn init_round(&self, view: u64) -> RoundData<Self::Id, Self::In, Self::Out>;
@@ -82,13 +85,13 @@ pub trait Environment {
 }
 
 /// Data necessary to create a voter.
-pub struct VoterData<Id: Ord, GlobalIn, GlobalOut, N, D> {
+pub struct VoterData<Id: Ord> {
     /// Local voter id.
     pub local_id: Id,
-    pub global_in: GlobalIn,
-    pub global_out: GlobalOut,
-    pub voters: VoterSet<Id>,
-    pub finalized_target: (N, D),
+    // pub global_in: GlobalIn,
+    // pub global_out: GlobalOut,
+    // pub voters: VoterSet<Id>,
+    // pub finalized_target: (N, D),
 }
 
 /// Data necessary to participate in a round.
