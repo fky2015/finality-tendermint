@@ -83,15 +83,9 @@ impl Environment for DummyEnvironment {
         >,
     >;
 
-    fn init_voter(
-        &self,
-    ) -> VoterData<Self::Id, Self::GlobalIn, Self::GlobalOut, Self::Number, Self::Hash> {
+    fn init_voter(&self) -> VoterData<Self::Id> {
         let globals = self.network.make_global_comms(self.local_id);
         VoterData {
-            finalized_target: (0, GENESIS_HASH),
-            voters: self.voters.lock().clone(),
-            global_in: Box::new(globals.0),
-            global_out: Box::pin(globals.1),
             local_id: self.local_id,
         }
     }

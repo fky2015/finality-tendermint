@@ -289,6 +289,13 @@ impl<E: Environment> Round<E> {
 
                 let proposal_target_hash = proposal.target_hash.clone();
 
+                #[cfg(test)]
+                trace!(
+                    id = self.local_id,
+                    "locked_round = {:?}, locked_value = {:?}",
+                    locked_round,
+                    locked_value
+                );
                 if locked_round == None || locked_value == Some(proposal_target_hash.clone()) {
                     Message::Prevote(Prevote {
                         target_hash: Some(proposal_target_hash),
@@ -511,6 +518,12 @@ impl<E: Environment> RoundState<E> {
             <E as Environment>::Id,
         >,
     ) {
+        #[cfg(test)]
+        trace!(
+            id = self.global.lock().local_id,
+            "Processing incoming message {:?}",
+            signed_msg
+        );
         let SignedMessage {
             id,
             message: msg,
@@ -523,14 +536,36 @@ impl<E: Environment> RoundState<E> {
                 }
             }
             Message::Prevote(prevote) => {
-                self.prevotes.push((prevote, id, signature));
+                if let Some(proposal) = &self.proposal {
+                    if prevote.target_height == proposal.target_height {
+                        self.prevotes.push((prevote, id, signature));
+                    }
+                } else {
+                    let height = self.global.lock().height;
+                    if prevote.target_height > height {
+                        self.prevotes.push((prevote, id, signature));
+                    }
+                }
             }
             Message::Precommit(precommit) => {
-                self.precommits.push(SignedCommit {
-                    commit: precommit,
-                    signature,
-                    id,
-                });
+                if let Some(proposal) = &self.proposal {
+                    if precommit.target_height == proposal.target_height {
+                        self.precommits.push(SignedCommit {
+                            commit: precommit,
+                            signature,
+                            id,
+                        });
+                    }
+                } else {
+                    let height = self.global.lock().height;
+                    if precommit.target_height > height {
+                        self.precommits.push(SignedCommit {
+                            commit: precommit,
+                            signature,
+                            id,
+                        });
+                    }
+                }
             }
         }
         self.waker.take().map(|w| w.wake());
@@ -685,10 +720,14 @@ mod test {
 
         let (network, routing_network) = make_network();
 
-        let env = Arc::new(DummyEnvironment::new(network, local_id, voter_set));
+        let env = Arc::new(DummyEnvironment::new(
+            network.to_owned(),
+            local_id,
+            voter_set.to_owned(),
+        ));
 
         // init chain
-        let _last_finalized = env.with_chain(|chain| {
+        let last_finalized = env.with_chain(|chain| {
             chain.push_blocks(GENESIS_HASH, &["A", "B", "C", "D", "E"]);
             log::trace!(
                 "chain: {:?}, last_finalized: {:?}, next_to_be_finalized: {:?}",
@@ -699,7 +738,14 @@ mod test {
             chain.last_finalized()
         });
 
-        let mut voter = Voter::new(env.clone());
+        let (global_incoming, global_outgoing) = network.make_global_comms(local_id);
+        let mut voter = Voter::new(
+            env.clone(),
+            Box::new(global_incoming),
+            Box::pin(global_outgoing),
+            voter_set.lock().clone(),
+            last_finalized,
+        );
 
         tokio::spawn(routing_network);
 
@@ -743,7 +789,7 @@ mod test {
                 ));
 
                 // init chain
-                let _last_finalized = env.with_chain(|chain| {
+                let last_finalized = env.with_chain(|chain| {
                     chain.push_blocks(GENESIS_HASH, &["A", "B", "C", "D", "E"]);
                     log::trace!(
                         "chain: {:?}, last_finalized: {:?}, next_to_be_finalized: {:?}",
@@ -754,7 +800,15 @@ mod test {
                     chain.last_finalized()
                 });
 
-                let mut voter = Voter::new(env.clone());
+                let (global_incoming, global_outgoing) = network.make_global_comms(local_id);
+
+                let mut voter = Voter::new(
+                    env.clone(),
+                    Box::new(global_incoming),
+                    Box::pin(global_outgoing),
+                    voter_set.lock().clone(),
+                    last_finalized,
+                );
 
                 tokio::spawn(async move {
                     voter.start().await;
@@ -808,7 +862,7 @@ mod test {
                 ));
 
                 // init chain
-                let _last_finalized = env.with_chain(|chain| {
+                let last_finalized = env.with_chain(|chain| {
                     chain.push_blocks(GENESIS_HASH, &["A", "B", "C", "D", "E"]);
                     log::trace!(
                         "chain: {:?}, last_finalized: {:?}, next_to_be_finalized: {:?}",
@@ -819,7 +873,15 @@ mod test {
                     chain.last_finalized()
                 });
 
-                let mut voter = Voter::new(env.clone());
+                let (global_incoming, global_outgoing) = network.make_global_comms(local_id);
+
+                let mut voter = Voter::new(
+                    env.clone(),
+                    Box::new(global_incoming),
+                    Box::pin(global_outgoing),
+                    voter_set.lock().clone(),
+                    last_finalized,
+                );
 
                 tokio::spawn(async move {
                     voter.start().await;
