@@ -222,6 +222,7 @@ impl<E: Environment> Round<E> {
                 // let finalized_hash = global.lock().decision.get(&height).unwrap().clone();
                 #[cfg(test)]
                 info!(id = self.local_id, "current_target {:?}", finalized_hash);
+                log::warn!("current_target {:?}", finalized_hash);
                 let (target_height, target_hash) = self
                     .env
                     .propose(round, finalized_hash)
@@ -229,10 +230,21 @@ impl<E: Environment> Round<E> {
                     .unwrap()
                     .unwrap();
                 // TODO: print panic stacktrace in console
-                assert_eq!(target_height, height + num::one());
                 if target_height == height {
+                    let proposal = Message::Proposal(Proposal {
+                        target_hash,
+                        target_height,
+                        valid_round: None,
+                        round,
+                    });
+
+                    #[cfg(test)]
+                    info!(id = self.local_id, "Proposing {:?}", proposal);
+
+                    self.outgoing.send(proposal).await;
                     // let it fall
                 } else {
+                    assert_eq!(target_height, height + num::one());
                     let proposal = Message::Proposal(Proposal {
                         target_hash,
                         target_height,
@@ -264,6 +276,15 @@ impl<E: Environment> Round<E> {
         #[cfg(test)]
         info!(id = self.local_id, "Waiting for proposal");
         let provote = if let Ok(proposal) = fu.await {
+            if proposal.target_height == height {
+                #[cfg(test)]
+                info!(
+                    id = self.local_id,
+                    "receive proposal with same height: {:?}", proposal
+                );
+
+                return Err(vec![]);
+            }
             #[cfg(test)]
             info!(id = self.local_id, "Got proposal {:?}", proposal);
             if let Some(vr) = proposal.valid_round {
@@ -466,7 +487,9 @@ impl<E: Environment> GlobalState<E> {
     }
 
     pub fn append_round(&mut self, round: u64, prevotes: Vec<Prevote<E::Number, E::Hash>>) {
-        self.message_log.insert(round, prevotes);
+        if prevotes.len() > 0 {
+            self.message_log.insert(round, prevotes);
+        }
     }
 
     pub fn get_round(&self, round: u64) -> Option<Vec<Prevote<E::Number, E::Hash>>> {
