@@ -419,7 +419,7 @@ impl<E: Environment> Round<E> {
                     .lock()
                     .decision
                     .insert(commit.target_height, hash.clone());
-                let new_height = global.lock().height + num::one();
+                let new_height = commit.target_height;
                 global.lock().height = new_height;
                 global.lock().locked_value = None;
                 global.lock().locked_round = None;
