@@ -186,17 +186,12 @@ impl<E: Environment> Round<E> {
         let round = global.lock().round;
         // if I'm the proposer
         let is_proposer = self.round_state.lock().is_proposer();
-        #[cfg(test)]
-        info!(
-            id = self.local_id,
-            "Round {}: proposer {}", round, is_proposer
-        );
+        info!("Round {}: proposer {}", round, is_proposer);
         if is_proposer {
             // broadcast proposal
             let valid_value = global.lock().valid_value.clone();
             if let Some(vv) = valid_value {
-                #[cfg(test)]
-                info!(id = self.local_id, "valid_value: {:?}", vv);
+                info!("valid_value: {:?}", vv);
                 let valid_round = global.lock().valid_round;
                 let proposal = Message::Proposal(Proposal {
                     target_hash: vv,
@@ -204,24 +199,17 @@ impl<E: Environment> Round<E> {
                     valid_round,
                     round,
                 });
-                #[cfg(test)]
-                info!(id = self.local_id, "Proposing {:?}", proposal);
+                info!("Proposing {:?}", proposal);
                 self.outgoing.send(proposal).await;
             } else {
-                #[cfg(test)]
-                info!(id = self.local_id, "No valid value");
+                info!("No valid value");
                 let decision = global.lock().decision.clone();
-                #[cfg(test)]
-                info!(
-                    id = self.local_id,
-                    "decision: {:?}, height: {:?}", decision, height
-                );
+                info!("decision: {:?}, height: {:?}", decision, height);
 
                 let finalized_hash = decision.get(&height).unwrap().clone();
 
                 // let finalized_hash = global.lock().decision.get(&height).unwrap().clone();
-                #[cfg(test)]
-                info!(id = self.local_id, "current_target {:?}", finalized_hash);
+                info!("current_target {:?}", finalized_hash);
                 log::warn!("current_target {:?}", finalized_hash);
                 let (target_height, target_hash) = self
                     .env
@@ -238,8 +226,7 @@ impl<E: Environment> Round<E> {
                         round,
                     });
 
-                    #[cfg(test)]
-                    info!(id = self.local_id, "Proposing {:?}", proposal);
+                    info!("Proposing {:?}", proposal);
 
                     self.outgoing.send(proposal).await;
                     // let it fall
@@ -252,8 +239,7 @@ impl<E: Environment> Round<E> {
                         round,
                     });
 
-                    #[cfg(test)]
-                    info!(id = self.local_id, "Proposing {:?}", proposal);
+                    info!("Proposing {:?}", proposal);
 
                     self.outgoing.send(proposal).await;
                 };
@@ -273,20 +259,14 @@ impl<E: Environment> Round<E> {
             }
         });
 
-        #[cfg(test)]
-        info!(id = self.local_id, "Waiting for proposal");
+        info!("Waiting for proposal");
         let provote = if let Ok(proposal) = fu.await {
             if proposal.target_height == height {
-                #[cfg(test)]
-                info!(
-                    id = self.local_id,
-                    "receive proposal with same height: {:?}", proposal
-                );
+                info!("receive proposal with same height: {:?}", proposal);
 
                 return Err(vec![]);
             }
-            #[cfg(test)]
-            info!(id = self.local_id, "Got proposal {:?}", proposal);
+            info!("Got proposal {:?}", proposal);
             if let Some(vr) = proposal.valid_round {
                 if vr < round && global.lock().get_round(vr).is_some() {
                     Message::Prevote(Prevote {
@@ -310,9 +290,7 @@ impl<E: Environment> Round<E> {
 
                 let proposal_target_hash = proposal.target_hash.clone();
 
-                #[cfg(test)]
                 trace!(
-                    id = self.local_id,
                     "locked_round = {:?}, locked_value = {:?}",
                     locked_round,
                     locked_value
@@ -332,8 +310,7 @@ impl<E: Environment> Round<E> {
                 }
             }
         } else {
-            #[cfg(test)]
-            info!(id = self.local_id, "No proposal");
+            info!("No proposal");
             // broadcast nil
             let target_height = global.lock().height;
             let round = global.lock().round;
@@ -344,8 +321,7 @@ impl<E: Environment> Round<E> {
             })
         };
 
-        #[cfg(test)]
-        info!(id = self.local_id, "Sending provote {:?}", provote);
+        info!("Sending provote {:?}", provote);
         self.outgoing.send(provote).await;
 
         global.lock().current_state = CurrentState::Prevote;
@@ -365,8 +341,7 @@ impl<E: Environment> Round<E> {
         });
 
         let precommit = if let Ok(prevotes) = fu.await {
-            #[cfg(test)]
-            info!(id = self.local_id, "Got prevotes {:?}", prevotes);
+            info!("Got prevotes {:?}", prevotes);
             global.lock().locked_value = None;
             let locked_round = global.lock().round;
             global.lock().locked_round = Some(locked_round);
@@ -386,8 +361,7 @@ impl<E: Environment> Round<E> {
             })
         };
 
-        #[cfg(test)]
-        info!(id = self.local_id, "Sending precommit {:?}", precommit);
+        info!("Sending precommit {:?}", precommit);
         self.outgoing.send(precommit).await;
         // 37: if stepp = prevote then
         // 38: lockedV aluep ← v
@@ -410,8 +384,7 @@ impl<E: Environment> Round<E> {
         });
 
         if let Ok(commits) = fu.await {
-            #[cfg(test)]
-            info!(id = self.local_id, "Got precommits {:?}", commits);
+            info!("Got precommits {:?}", commits);
             let commit = self.valid_precommits(commits.clone());
 
             if let Some(hash) = commit.target_hash {
@@ -431,8 +404,7 @@ impl<E: Environment> Round<E> {
                     target_hash: hash,
                     target_number: commit.target_height,
                 };
-                #[cfg(test)]
-                info!(id = self.local_id, "Finalize commit {:?}", f_commit);
+                info!("Finalize commit {:?}", f_commit);
                 Ok(f_commit)
             } else {
                 Err(self
@@ -541,12 +513,7 @@ impl<E: Environment> RoundState<E> {
             <E as Environment>::Id,
         >,
     ) {
-        #[cfg(test)]
-        trace!(
-            id = self.global.lock().local_id,
-            "Processing incoming message {:?}",
-            signed_msg
-        );
+        trace!("Processing incoming message {:?}", signed_msg);
         let SignedMessage {
             id,
             message: msg,
@@ -557,6 +524,12 @@ impl<E: Environment> RoundState<E> {
                 if self.proposer == id {
                     self.proposal = Some(proposal);
                 }
+                self.prevotes.retain(|(p, _, _)| {
+                    p.target_height >= self.proposal.as_ref().unwrap().target_height
+                });
+                self.precommits.retain(|s| {
+                    s.commit.target_height >= self.proposal.as_ref().unwrap().target_height
+                });
             }
             Message::Prevote(prevote) => {
                 if let Some(proposal) = &self.proposal {

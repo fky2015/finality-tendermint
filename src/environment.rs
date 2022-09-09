@@ -3,7 +3,7 @@ use tracing::Value;
 
 use crate::{
     messages::{FinalizedCommit, GlobalMessageIn, GlobalMessageOut, Message, SignedMessage},
-    BlockNumberOps, Error, VoterSet,
+    BlockNumberOps, Error,
 };
 
 /// Necessary environment for a voter.
@@ -14,9 +14,6 @@ pub trait Environment {
     /// [`Self::round_commit_timer`].
     type Timer: Future<Output = Result<(), Self::Error>> + Unpin;
     /// The associated Id for the Environment.
-    #[cfg(test)]
-    type Id: Clone + Eq + std::hash::Hash + Ord + std::fmt::Debug + Value;
-    #[cfg(not(test))]
     type Id: Clone + Eq + std::hash::Hash + Ord + std::fmt::Debug;
     /// The associated Signature type for the Environment.
     type Signature: Eq + Clone + core::fmt::Debug;
@@ -54,9 +51,7 @@ pub trait Environment {
         > + Unpin;
 
     /// Get Voter data.
-    fn init_voter(
-        &self,
-    ) -> VoterData<Self::Id>;
+    fn init_voter(&self) -> VoterData<Self::Id>;
 
     /// Get round data.
     fn init_round(&self, view: u64) -> RoundData<Self::Id, Self::In, Self::Out>;
