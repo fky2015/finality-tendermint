@@ -186,12 +186,12 @@ impl<E: Environment> Round<E> {
         let round = global.lock().round;
         // if I'm the proposer
         let is_proposer = self.round_state.lock().is_proposer();
-        info!("Round {}: proposer {}", round, is_proposer);
+        info!(target: "aft", "Round {}: proposer {}", round, is_proposer);
         if is_proposer {
             // broadcast proposal
             let valid_value = global.lock().valid_value.clone();
             if let Some(vv) = valid_value {
-                info!("valid_value: {:?}", vv);
+                info!(target: "aft","valid_value: {:?}", vv);
                 let valid_round = global.lock().valid_round;
                 let proposal = Message::Proposal(Proposal {
                     target_hash: vv,
@@ -199,18 +199,17 @@ impl<E: Environment> Round<E> {
                     valid_round,
                     round,
                 });
-                info!("Proposing {:?}", proposal);
+                info!(target: "aft","Proposing {:?}", proposal);
                 self.outgoing.send(proposal).await;
             } else {
-                info!("No valid value");
+                info!(target: "aft","No valid value");
                 let decision = global.lock().decision.clone();
-                info!("decision: {:?}, height: {:?}", decision, height);
+                info!(target: "aft","decision: {:?}, height: {:?}", decision, height);
 
                 let finalized_hash = decision.get(&height).unwrap().clone();
 
                 // let finalized_hash = global.lock().decision.get(&height).unwrap().clone();
-                info!("current_target {:?}", finalized_hash);
-                log::warn!("current_target {:?}", finalized_hash);
+                info!(target: "aft","current_target {:?}", finalized_hash);
                 let (target_height, target_hash) = self
                     .env
                     .propose(round, finalized_hash)
@@ -226,7 +225,7 @@ impl<E: Environment> Round<E> {
                         round,
                     });
 
-                    info!("Proposing {:?}", proposal);
+                    info!(target:"aft", "Proposing {:?}", proposal);
 
                     self.outgoing.send(proposal).await;
                     // let it fall
@@ -239,7 +238,7 @@ impl<E: Environment> Round<E> {
                         round,
                     });
 
-                    info!("Proposing {:?}", proposal);
+                    info!(target: "aft","Proposing {:?}", proposal);
 
                     self.outgoing.send(proposal).await;
                 };
@@ -259,14 +258,14 @@ impl<E: Environment> Round<E> {
             }
         });
 
-        info!("Waiting for proposal");
+        info!(target: "aft","Waiting for proposal");
         let provote = if let Ok(proposal) = fu.await {
             if proposal.target_height == height {
-                info!("receive proposal with same height: {:?}", proposal);
+                info!(target: "aft","receive proposal with same height: {:?}", proposal);
 
                 return Err(vec![]);
             }
-            info!("Got proposal {:?}", proposal);
+            info!(target: "aft","Got proposal {:?}", proposal);
             if let Some(vr) = proposal.valid_round {
                 if vr < round && global.lock().get_round(vr).is_some() {
                     Message::Prevote(Prevote {
@@ -310,7 +309,7 @@ impl<E: Environment> Round<E> {
                 }
             }
         } else {
-            info!("No proposal");
+            info!(target: "aft", "No proposal");
             // broadcast nil
             let target_height = global.lock().height;
             let round = global.lock().round;
@@ -321,7 +320,7 @@ impl<E: Environment> Round<E> {
             })
         };
 
-        info!("Sending provote {:?}", provote);
+        info!(target: "aft", "Sending provote {:?}", provote);
         self.outgoing.send(provote).await;
 
         global.lock().current_state = CurrentState::Prevote;
@@ -341,7 +340,7 @@ impl<E: Environment> Round<E> {
         });
 
         let precommit = if let Ok(prevotes) = fu.await {
-            info!("Got prevotes {:?}", prevotes);
+            info!(target: "aft","Got prevotes {:?}", prevotes);
             global.lock().locked_value = None;
             let locked_round = global.lock().round;
             global.lock().locked_round = Some(locked_round);
@@ -361,7 +360,7 @@ impl<E: Environment> Round<E> {
             })
         };
 
-        info!("Sending precommit {:?}", precommit);
+        info!(target: "aft","Sending precommit {:?}", precommit);
         self.outgoing.send(precommit).await;
         // 37: if stepp = prevote then
         // 38: lockedV aluep ← v
@@ -384,7 +383,7 @@ impl<E: Environment> Round<E> {
         });
 
         if let Ok(commits) = fu.await {
-            info!("Got precommits {:?}", commits);
+            info!(target: "aft","Got precommits {:?}", commits);
             let commit = self.valid_precommits(commits.clone());
 
             if let Some(hash) = commit.target_hash {
@@ -404,7 +403,7 @@ impl<E: Environment> Round<E> {
                     target_hash: hash,
                     target_number: commit.target_height,
                 };
-                info!("Finalize commit {:?}", f_commit);
+                info!(target: "aft","Finalize commit {:?}", f_commit);
                 Ok(f_commit)
             } else {
                 Err(self
